@@ -20,62 +20,139 @@ struct RootView: View {
     let onEscape: () -> Void
 
     var body: some View {
-        ZStack(alignment: .top) {
+        ZStack(alignment: .bottomTrailing) {
             VStack(spacing: 0) {
-                header
                 MarkdownEditor(
                     text: Binding(get: { store.current?.text ?? "" }, set: { store.updateCurrent($0) }),
                     noteID: store.currentID,
                     ui: ui,
                     onEscape: onEscape)
-                footer
+                Text("\(store.current?.text.count ?? 0) characters")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
             }
+            FormatBar(ui: ui)
+                .padding(.trailing, 12)
+                .padding(.bottom, 8)
+        }
+        .overlay(alignment: .top) {
             if ui.showSwitcher {
-                Color.black.opacity(0.08)
-                    .contentShape(Rectangle())
-                    .onTapGesture { ui.showSwitcher = false; ui.focusEditor() }
-                SwitcherView(store: store, ui: ui)
-                    .padding(.top, 34)
+                ZStack(alignment: .top) {
+                    Color.black.opacity(0.08)
+                        .contentShape(Rectangle())
+                        .onTapGesture { ui.showSwitcher = false; ui.focusEditor() }
+                    SwitcherView(store: store, ui: ui)
+                        .padding(.top, 4)
+                }
             }
         }
-        .background(VisualEffectBackground())
-        .ignoresSafeArea()
+        .background(VisualEffectBackground().ignoresSafeArea())
+    }
+}
+
+/// Centred note title shown in the window toolbar.
+struct TitleView: View {
+    @ObservedObject var store: NoteStore
+
+    var body: some View {
+        Text(store.current?.title ?? "Jot")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .frame(maxWidth: 260)
+            .fixedSize()
+    }
+}
+
+/// Collapsible formatting bar in the bottom-right corner, like Raycast Notes.
+struct FormatBar: View {
+    @ObservedObject var ui: UIState
+    @AppStorage("formatBarOpen") private var open = false
+
+    private func apply(_ action: (MarkdownTextView) -> Void) {
+        guard let tv = ui.textView as? MarkdownTextView else { return }
+        tv.window?.makeFirstResponder(tv)
+        action(tv)
     }
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            Button(action: onEscape) { Image(systemName: "xmark") }
-                .help("Close (Esc)")
-            Color.clear.frame(width: 16, height: 1)
-            Spacer(minLength: 0)
-            Text(store.current?.title ?? "Jot")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Spacer(minLength: 0)
-            Button { ui.showSwitcher.toggle() } label: { Image(systemName: "list.bullet") }
-                .help("Browse notes (⌘P)")
-            Button { store.newNote(); ui.focusEditor() } label: { Image(systemName: "square.and.pencil") }
-                .help("New note (⌘N)")
+    var body: some View {
+        HStack(spacing: 8) {
+            if open {
+                HStack(spacing: 4) {
+                    Menu {
+                        Button("Heading 1") { apply { $0.setHeading(1) } }
+                        Button("Heading 2") { apply { $0.setHeading(2) } }
+                        Button("Heading 3") { apply { $0.setHeading(3) } }
+                        Button("Body Text") { apply { $0.setHeading(0) } }
+                    } label: {
+                        Text("H").font(.system(size: 16, weight: .medium))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("Heading")
+
+                    Menu {
+                        Button("Bold") { apply { $0.jotBold(nil) } }
+                        Button("Italic") { apply { $0.jotItalic(nil) } }
+                        Button("Strikethrough") { apply { $0.jotStrikethrough(nil) } }
+                    } label: {
+                        Image(systemName: "textformat")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("Text style")
+
+                    tool("link", "Link (⌘K)") { $0.jotLink(nil) }
+                    tool("chevron.left.forwardslash.chevron.right", "Inline code") { $0.jotCode(nil) }
+                    Divider().frame(height: 18).padding(.horizontal, 4)
+                    tool("curlybraces.square", "Code block") { $0.jotCodeBlock(nil) }
+                    tool("text.quote", "Quote") { $0.jotQuote(nil) }
+                    Divider().frame(height: 18).padding(.horizontal, 4)
+
+                    Menu {
+                        Button("Bulleted List") { apply { $0.toggleList(.bullet) } }
+                        Button("Numbered List") { apply { $0.toggleList(.numbered) } }
+                        Button("Checklist") { apply { $0.toggleList(.task) } }
+                    } label: {
+                        Image(systemName: "list.bullet")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("Lists")
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 38)
+                .background(Capsule().fill(.regularMaterial))
+                .overlay(Capsule().strokeBorder(.primary.opacity(0.1)))
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+
+            Button {
+                withAnimation(.snappy(duration: 0.2)) { open.toggle() }
+            } label: {
+                Group {
+                    if open { Image(systemName: "xmark").font(.system(size: 12, weight: .bold)) }
+                    else { Text("T").font(.system(size: 17, weight: .medium, design: .serif)) }
+                }
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(.regularMaterial))
+                .overlay(Circle().strokeBorder(.primary.opacity(0.1)))
+                .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help(open ? "Hide formatting" : "Formatting")
+        }
+        .foregroundStyle(.secondary)
+    }
+
+    private func tool(_ symbol: String, _ help: String, _ action: @escaping (MarkdownTextView) -> Void) -> some View {
+        Button { apply(action) } label: {
+            Image(systemName: symbol).frame(width: 28, height: 28).contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 12)
-        .frame(height: 32)
-    }
-
-    private var footer: some View {
-        let text = store.current?.text ?? ""
-        let words = text.split { $0.isWhitespace }.count
-        return HStack {
-            Text("\(store.notes.count) note\(store.notes.count == 1 ? "" : "s")")
-            Spacer()
-            Text("\(words) word\(words == 1 ? "" : "s") · \(text.count) chars")
-        }
-        .font(.system(size: 10.5))
-        .foregroundStyle(.tertiary)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
+        .help(help)
     }
 }
 

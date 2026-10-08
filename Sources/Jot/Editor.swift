@@ -193,34 +193,113 @@ final class MarkdownTextView: NSTextView {
     @objc func jotStrikethrough(_ sender: Any?) { wrap("~~") }
     @objc func jotCode(_ sender: Any?) { wrap("`") }
 
-    @objc func jotChecklist(_ sender: Any?) {
-        let ns = string as NSString
-        let sel = selectedRange()
-        let line = ns.lineRange(for: NSRange(location: sel.location, length: 0))
-        let text = ns.substring(with: line) as NSString
-        let re = try! NSRegularExpression(pattern: #"^([ \t]*)([-*+][ \t]+\[[ xX]\][ \t]+|[-*+][ \t]+)?"#)
-        guard let m = re.firstMatch(in: text as String, range: NSRange(location: 0, length: text.length)) else { return }
-        let marker = m.range(at: 2)
-        let existing = marker.location == NSNotFound ? "" : text.substring(with: marker)
-        let replacement = existing.contains("[") ? "" : "- [ ] "
-        let target = NSRange(location: line.location + m.range(at: 1).length, length: (existing as NSString).length)
-        let delta = (replacement as NSString).length - target.length
-        replace(target, with: replacement)
-        setSelectedRange(NSRange(location: max(target.location, sel.location + delta), length: sel.length))
-    }
+    @objc func jotChecklist(_ sender: Any?) { toggleList(.task) }
+    @objc func jotBulletList(_ sender: Any?) { toggleList(.bullet) }
+    @objc func jotNumberedList(_ sender: Any?) { toggleList(.numbered) }
+    @objc func jotQuote(_ sender: Any?) { toggleList(.quote) }
+    @objc func jotHeading1(_ sender: Any?) { setHeading(1) }
+    @objc func jotHeading2(_ sender: Any?) { setHeading(2) }
+    @objc func jotHeading3(_ sender: Any?) { setHeading(3) }
+    @objc func jotBodyText(_ sender: Any?) { setHeading(0) }
 
     @objc func jotHeading(_ sender: Any?) {
         let ns = string as NSString
+        let line = ns.substring(with: ns.lineRange(for: NSRange(location: selectedRange().location, length: 0)))
+        let hashes = line.prefix { $0 == "#" }.count
+        setHeading(hashes >= 3 ? 0 : hashes + 1) // none → # → ## → ### → none
+    }
+
+    @objc func jotLink(_ sender: Any?) {
+        let ns = string as NSString
         let sel = selectedRange()
-        let line = ns.lineRange(for: NSRange(location: sel.location, length: 0))
-        let text = ns.substring(with: line)
-        let hashes = text.prefix { $0 == "#" }.count
-        // Cycle: none → # → ## → ### → none
-        let oldLen = hashes == 0 ? 0 : hashes + (text.dropFirst(hashes).first == " " ? 1 : 0)
-        let replacement = hashes >= 3 ? "" : String(repeating: "#", count: hashes + 1) + " "
-        replace(NSRange(location: line.location, length: oldLen), with: replacement)
-        let delta = (replacement as NSString).length - oldLen
-        setSelectedRange(NSRange(location: max(line.location, sel.location + delta), length: sel.length))
+        let selected = ns.substring(with: sel)
+        if selected.hasPrefix("http://") || selected.hasPrefix("https://") {
+            replace(sel, with: "[](\(selected))")
+            setSelectedRange(NSRange(location: sel.location + 1, length: 0))
+        } else {
+            replace(sel, with: "[\(selected)]()")
+            let caret = sel.location + (selected as NSString).length + (selected.isEmpty ? 1 : 3)
+            setSelectedRange(NSRange(location: caret, length: 0))
+        }
+    }
+
+    @objc func jotCodeBlock(_ sender: Any?) {
+        let ns = string as NSString
+        let lines = ns.lineRange(for: selectedRange())
+        var body = ns.substring(with: lines)
+        let hadNewline = body.hasSuffix("\n")
+        if hadNewline { body.removeLast() }
+        let replacement = "```\n" + body + "\n```" + (hadNewline ? "\n" : "")
+        replace(lines, with: replacement)
+        setSelectedRange(NSRange(location: lines.location + 4 + (body as NSString).length, length: 0))
+    }
+
+    enum ListKind { case bullet, numbered, task, quote }
+
+    private static let linePrefixRegex = try! NSRegularExpression(
+        pattern: #"^([ \t]*)([-*+][ \t]+\[[ xX]\][ \t]+|[-*+][ \t]+|\d+[.)][ \t]+|>[ \t]?)?"#)
+
+    /// Applies a list / quote style to every selected line, or removes it if all lines already have it.
+    func toggleList(_ kind: ListKind) {
+        let parsed = selectedLines().map { line -> (indent: String, marker: String, rest: String) in
+            let ns = line as NSString
+            let m = Self.linePrefixRegex.firstMatch(in: line, range: NSRange(location: 0, length: ns.length))!
+            let marker = m.range(at: 2).location == NSNotFound ? "" : ns.substring(with: m.range(at: 2))
+            return (ns.substring(with: m.range(at: 1)), marker, ns.substring(from: m.range.length))
+        }
+        func kindOf(_ marker: String) -> ListKind? {
+            if marker.isEmpty { return nil }
+            if marker.hasPrefix(">") { return .quote }
+            if marker.contains("[") { return .task }
+            if marker.first?.isNumber == true { return .numbered }
+            return .bullet
+        }
+        let removing = parsed.allSatisfy { kindOf($0.marker) == kind }
+        var n = 0
+        let lines = parsed.map { p -> String in
+            if removing { return p.indent + p.rest }
+            if p.rest.isEmpty && parsed.count > 1 { return p.indent }
+            n += 1
+            let marker: String
+            switch kind {
+            case .bullet: marker = "- "
+            case .numbered: marker = "\(n). "
+            case .task: marker = "- [ ] "
+            case .quote: marker = "> "
+            }
+            return p.indent + marker + p.rest
+        }
+        replaceSelectedLines(with: lines)
+    }
+
+    func setHeading(_ level: Int) {
+        let lines = selectedLines().map { line -> String in
+            let stripped = line.replacingOccurrences(of: #"^#{1,6}[ \t]+"#, with: "", options: .regularExpression)
+            return level == 0 ? stripped : String(repeating: "#", count: level) + " " + stripped
+        }
+        replaceSelectedLines(with: lines)
+    }
+
+    private func selectedLines() -> [String] {
+        let ns = string as NSString
+        var text = ns.substring(with: ns.lineRange(for: selectedRange()))
+        if text.hasSuffix("\n") { text.removeLast() }
+        return text.components(separatedBy: "\n")
+    }
+
+    private func replaceSelectedLines(with lines: [String]) {
+        let ns = string as NSString
+        let sel = selectedRange()
+        var range = ns.lineRange(for: sel)
+        if range.length > 0, ns.character(at: NSMaxRange(range) - 1) == 0x0A { range.length -= 1 }
+        let joined = lines.joined(separator: "\n")
+        replace(range, with: joined)
+        let length = (joined as NSString).length
+        if sel.length == 0 && lines.count == 1 {
+            setSelectedRange(NSRange(location: range.location + length, length: 0))
+        } else {
+            setSelectedRange(NSRange(location: range.location, length: length))
+        }
     }
 
     private func wrap(_ marker: String) {

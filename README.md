@@ -11,6 +11,8 @@ A tiny native macOS replacement for Raycast Notes: a floating Markdown scratchpa
 Jot lives in the menu bar (no Dock icon). Left-click the icon to toggle, right-click for Settings (also ⌘,).
 Launching Jot while it's running (Raycast hotkey, Spotlight, Finder) shows the window.
 
+Debug: `.build/debug/Jot --snapshot out.png [--format-open]` renders the window to a PNG and quits.
+
 Settings: optional global shortcut (off by default), float on top, launch at login, notes folder, import.
 
 ## Shortcuts
@@ -26,11 +28,13 @@ Settings: optional global shortcut (off by default), float on top, launch at log
 | ⇧⌘R | Reveal note in Finder |
 | ⇧⌘I | Import Markdown files |
 | ⌘F | Find in note |
-| ⌘B / ⌘I / ⇧⌘X / ⌥⌘C | Bold / italic / strikethrough / inline code |
-| ⇧⌘H | Cycle heading level |
-| ⇧⌘L | Toggle checklist item |
+| ⌘B / ⌘I / ⇧⌘X / ⌘K | Bold / italic / strikethrough / link |
+| ⌥⌘C / ⌥⇧⌘C | Inline code / code block |
+| ⌥⌘1–3 / ⌥⌘0 / ⇧⌘H | Heading 1–3 / body text / cycle heading |
+| ⇧⌘8 / ⇧⌘7 / ⇧⌘L / ⇧⌘' | Bulleted / numbered / checklist / quote (toggles, multi-line) |
 | Tab / ⇧Tab | Indent / outdent list item |
 
+The **T** button (bottom-right) opens a formatting bar; the top bar has an actions menu (⌘), browse and new note.
 Click a `[ ]` to tick it. Return continues lists, numbered lists and checklists; Return on an empty item ends the list.
 
 ## Storage

@@ -26,6 +26,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         settings.onChange = { [weak self] in self?.applySettings() }
         applySettings()
         show()
+        if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
+            snapshot(to: CommandLine.arguments[i + 1])
+        }
+    }
+
+    /// Debug aid: renders the panel (including titlebar) to a PNG, then quits.
+    private func snapshot(to path: String) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [self] in
+            if CommandLine.arguments.contains("--format-open") { UserDefaults.standard.set(true, forKey: "formatBarOpen") }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in
+                guard let frameView = panel.contentView?.superview,
+                      let rep = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) else { return }
+                frameView.cacheDisplay(in: frameView.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+                NSApp.terminate(nil)
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) { store.flush() }
@@ -67,9 +84,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.minSize = NSSize(width: 320, height: 240)
-        for b in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-            panel.standardWindowButton(b)?.isHidden = true
-        }
+        panel.titlebarSeparatorStyle = .none
+        let toolbar = NSToolbar(identifier: "JotToolbar")
+        toolbar.delegate = self
+        toolbar.displayMode = .iconOnly
+        toolbar.allowsUserCustomization = false
+        toolbar.centeredItemIdentifiers = [Self.titleItem]
+        panel.toolbar = toolbar
+        panel.toolbarStyle = .unified
         let hosting = NSHostingView(rootView: RootView(store: store, ui: ui) { [weak self] in self?.hide() })
         hosting.sizingOptions = []
         panel.contentView = hosting
@@ -177,6 +199,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func nextNote(_ sender: Any?) { store.cycle(1); ui.focusEditor() }
     @objc func deleteNote(_ sender: Any?) { store.deleteCurrent(); ui.focusEditor() }
 
+    @objc func copyNote(_ sender: Any?) {
+        guard let text = store.current?.text else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
     @objc func revealNote(_ sender: Any?) {
         store.flush()
         if let url = store.current?.url { NSWorkspace.shared.activateFileViewerSelecting([url]) }
@@ -243,12 +271,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             item("Find Previous", #selector(NSTextView.performFindPanelAction(_:)), "g", [.command, .shift], tag: find.previousMatch.rawValue),
         ])
         submenu("Format", [
-            item("Heading", #selector(MarkdownTextView.jotHeading(_:)), "h", [.command, .shift]),
+            item("Heading 1", #selector(MarkdownTextView.jotHeading1(_:)), "1", [.command, .option]),
+            item("Heading 2", #selector(MarkdownTextView.jotHeading2(_:)), "2", [.command, .option]),
+            item("Heading 3", #selector(MarkdownTextView.jotHeading3(_:)), "3", [.command, .option]),
+            item("Body Text", #selector(MarkdownTextView.jotBodyText(_:)), "0", [.command, .option]),
+            item("Cycle Heading", #selector(MarkdownTextView.jotHeading(_:)), "h", [.command, .shift]),
+            .separator(),
             item("Bold", #selector(MarkdownTextView.jotBold(_:)), "b"),
             item("Italic", #selector(MarkdownTextView.jotItalic(_:)), "i"),
             item("Strikethrough", #selector(MarkdownTextView.jotStrikethrough(_:)), "x", [.command, .shift]),
+            item("Link", #selector(MarkdownTextView.jotLink(_:)), "k"),
             item("Inline Code", #selector(MarkdownTextView.jotCode(_:)), "c", [.command, .option]),
+            item("Code Block", #selector(MarkdownTextView.jotCodeBlock(_:)), "c", [.command, .option, .shift]),
+            .separator(),
+            item("Bulleted List", #selector(MarkdownTextView.jotBulletList(_:)), "8", [.command, .shift]),
+            item("Numbered List", #selector(MarkdownTextView.jotNumberedList(_:)), "7", [.command, .shift]),
             item("Checklist", #selector(MarkdownTextView.jotChecklist(_:)), "l", [.command, .shift]),
+            item("Quote", #selector(MarkdownTextView.jotQuote(_:)), "'", [.command, .shift]),
         ])
         return main
     }
@@ -276,5 +315,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         statusItem.menu = menu
         sender.performClick(nil)
         statusItem.menu = nil
+    }
+}
+
+// MARK: - Toolbar
+
+extension AppDelegate: NSToolbarDelegate {
+    static let titleItem = NSToolbarItem.Identifier("JotTitle")
+    static let actionsItem = NSToolbarItem.Identifier("JotActions")
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.flexibleSpace, Self.titleItem, .flexibleSpace, Self.actionsItem]
+    }
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        toolbarDefaultItemIdentifiers(toolbar)
+    }
+
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier,
+                 willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        switch id {
+        case Self.titleItem:
+            let item = NSToolbarItem(itemIdentifier: id)
+            item.view = NSHostingView(rootView: TitleView(store: store))
+            return item
+        case Self.actionsItem:
+            let actions = NSMenuToolbarItem(itemIdentifier: NSToolbarItem.Identifier("JotActionsMenu"))
+            actions.image = NSImage(systemSymbolName: "command", accessibilityDescription: "Actions")
+            actions.label = "Actions"
+            actions.toolTip = "Actions"
+            actions.showsIndicator = false
+            let menu = NSMenu()
+            [
+                item("New Note", #selector(newNote(_:)), target: self),
+                item("Find Note…", #selector(showSwitcher(_:)), target: self),
+                .separator(),
+                item("Copy Note as Markdown", #selector(copyNote(_:)), target: self),
+                item("Reveal in Finder", #selector(revealNote(_:)), target: self),
+                item("Import Markdown Files…", #selector(importNotes(_:)), target: self),
+                .separator(),
+                item("Move to Trash", #selector(deleteNote(_:)), target: self),
+                .separator(),
+                item("Settings…", #selector(openSettings(_:)), target: self),
+            ].forEach(menu.addItem)
+            actions.menu = menu
+
+            let browse = toolbarButton("JotBrowse", "square.on.square", "Browse notes (⌘P)", #selector(showSwitcher(_:)))
+            let add = toolbarButton("JotNew", "plus", "New note (⌘N)", #selector(newNote(_:)))
+            let group = NSToolbarItemGroup(itemIdentifier: id)
+            group.subitems = [actions, browse, add]
+            group.controlRepresentation = .expanded
+            group.selectionMode = .momentary
+            return group
+        default:
+            return nil
+        }
+    }
+
+    private func toolbarButton(_ id: String, _ symbol: String, _ tip: String, _ action: Selector) -> NSToolbarItem {
+        let item = NSToolbarItem(itemIdentifier: NSToolbarItem.Identifier(id))
+        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
+        item.label = tip
+        item.toolTip = tip
+        item.target = self
+        item.action = action
+        return item
     }
 }
