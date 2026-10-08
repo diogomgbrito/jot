@@ -356,7 +356,7 @@ final class MarkdownHighlighter: NSObject, NSTextStorageDelegate {
     private let dim = NSColor.tertiaryLabelColor
     private let codeBackground = NSColor.secondaryLabelColor.withAlphaComponent(0.1)
 
-    func textStorage(_ ts: NSTextStorage, willProcessEditing mask: NSTextStorageEditActions, range: NSRange, changeInLength: Int) {
+    func textStorage(_ ts: NSTextStorage, didProcessEditing mask: NSTextStorageEditActions, range: NSRange, changeInLength: Int) {
         guard mask.contains(.editedCharacters) else { return }
         highlight(ts)
     }
