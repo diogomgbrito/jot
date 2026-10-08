@@ -15,7 +15,7 @@ codesign --force --sign - "$APP"
 echo "Built $APP"
 
 if [[ "${1:-}" == "--install" ]]; then
-    pkill -x Jot 2>/dev/null || true
+    pkill -x Jot 2>/dev/null && sleep 1 || true
     mkdir -p ~/Applications
     rm -rf ~/Applications/Jot.app
     cp -R "$APP" ~/Applications/

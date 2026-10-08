@@ -44,7 +44,9 @@ struct RootView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Color.clear.frame(width: 44, height: 1)
+            Button(action: onEscape) { Image(systemName: "xmark") }
+                .help("Close (Esc)")
+            Color.clear.frame(width: 16, height: 1)
             Spacer(minLength: 0)
             Text(store.current?.title ?? "Jot")
                 .font(.system(size: 12, weight: .semibold))
