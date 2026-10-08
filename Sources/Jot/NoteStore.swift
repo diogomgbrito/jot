@@ -31,7 +31,7 @@ struct Note: Identifiable, Equatable {
 final class NoteStore: ObservableObject {
     @Published private(set) var notes: [Note] = []
     @Published private(set) var currentID: URL?
-    private(set) var folder: URL
+    @Published private(set) var folder: URL
 
     private var dirty: Set<URL> = []
     private var saveTask: Task<Void, Never>?
@@ -124,6 +124,30 @@ final class NoteStore: ObservableObject {
         let note = Note(url: url, text: text, modified: Date())
         notes.insert(note, at: 0)
         select(note.id)
+    }
+
+    /// Copies Markdown/text files into the notes folder (originals untouched). Returns how many were imported.
+    @discardableResult
+    func importFiles(_ urls: [URL]) -> Int {
+        flush()
+        var imported: [Note] = []
+        for src in urls {
+            guard let text = try? String(contentsOf: src, encoding: .utf8),
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            let date = (try? src.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date()
+            let url = uniqueURL()
+            do {
+                try text.write(to: url, atomically: true, encoding: .utf8)
+                try? fm.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
+                imported.append(Note(url: url, text: text, modified: date))
+            } catch {
+                NSLog("Jot: failed to import \(src.path): \(error)")
+            }
+        }
+        guard !imported.isEmpty else { return 0 }
+        notes.append(contentsOf: imported)
+        select(imported[0].id)
+        return imported.count
     }
 
     func deleteCurrent() {

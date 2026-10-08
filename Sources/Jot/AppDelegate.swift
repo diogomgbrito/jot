@@ -1,6 +1,6 @@
 import AppKit
-import ServiceManagement
 import SwiftUI
+import UniformTypeIdentifiers
 
 final class NotesPanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -11,36 +11,44 @@ final class NotesPanel: NSPanel {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
     let store = NoteStore()
     let ui = UIState()
+    let settings = AppSettings()
     private var panel: NotesPanel!
+    private var settingsWindow: NSWindow?
     private var statusItem: NSStatusItem!
     private var hotKey: HotKey?
-    private let defaults = UserDefaults.standard
-
-    private var presetIndex: Int {
-        get { min(defaults.integer(forKey: "hotKeyPreset"), HotKey.presets.count - 1) }
-        set { defaults.set(newValue, forKey: "hotKeyPreset") }
-    }
-
-    private var floatsOnTop: Bool {
-        get { defaults.object(forKey: "floatOnTop") as? Bool ?? true }
-        set { defaults.set(newValue, forKey: "floatOnTop") }
-    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        if let icon = NSImage(named: "AppIcon") { NSApp.applicationIconImage = icon }
         buildPanel()
         NSApp.mainMenu = buildMainMenu()
         buildStatusItem()
-        registerHotKey()
+        settings.onChange = { [weak self] in self?.applySettings() }
+        applySettings()
         show()
     }
 
     func applicationWillTerminate(_ notification: Notification) { store.flush() }
     func applicationDidResignActive(_ notification: Notification) { store.flush() }
 
+    /// Launching the already-running app (Raycast, Spotlight, Finder) shows the panel.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         show()
         return false
+    }
+
+    private func applySettings() {
+        panel.level = settings.floatOnTop ? .floating : .normal
+        hotKey = nil
+        settings.hotKeyError = nil
+        guard settings.hotKeyEnabled else { return }
+        let preset = HotKey.presets[settings.presetIndex]
+        hotKey = HotKey(preset) { [weak self] in
+            MainActor.assumeIsolated { self?.toggle() }
+        }
+        if hotKey == nil {
+            settings.hotKeyError = "Couldn't register \(preset.title); another app is probably using it."
+        }
     }
 
     // MARK: Panel
@@ -58,7 +66,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.level = floatsOnTop ? .floating : .normal
         panel.minSize = NSSize(width: 320, height: 240)
         for b in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             panel.standardWindowButton(b)?.isHidden = true
@@ -71,7 +78,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         panel.setFrameAutosaveName("JotPanel")
     }
 
-    func windowWillClose(_ notification: Notification) { store.flush() }
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        hide()
+        return false
+    }
 
     func toggle() {
         if NSApp.isActive && panel.isKeyWindow { hide() } else { show() }
@@ -89,22 +99,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         store.flush()
         ui.showSwitcher = false
         panel.orderOut(nil)
-        NSApp.hide(nil)
+        if settingsWindow?.isVisible != true { NSApp.hide(nil) }
     }
 
-    // MARK: Hotkey
+    // MARK: Settings
 
-    private func registerHotKey() {
-        hotKey = nil
-        let preset = HotKey.presets[presetIndex]
-        hotKey = HotKey(preset) { [weak self] in
-            MainActor.assumeIsolated { self?.toggle() }
+    @objc func openSettings(_ sender: Any?) {
+        if settingsWindow == nil {
+            let view = SettingsView(settings: settings, store: store,
+                                    chooseFolder: { [weak self] in self?.chooseFolder() },
+                                    importNotes: { [weak self] in self?.importNotes(nil) })
+            let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+            window.title = "Jot Settings"
+            window.styleMask = [.titled, .closable]
+            window.isReleasedWhenClosed = false
+            window.level = .floating
+            window.center()
+            settingsWindow = window
         }
-        if hotKey == nil {
+        NSApp.unhide(nil)
+        NSApp.activate()
+        settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    private func chooseFolder() {
+        let open = NSOpenPanel()
+        open.canChooseDirectories = true
+        open.canChooseFiles = false
+        open.canCreateDirectories = true
+        open.directoryURL = store.folder
+        open.prompt = "Use Folder"
+        open.message = "Choose the folder where Jot keeps its Markdown notes."
+        let host = settingsWindow?.isVisible == true ? settingsWindow! : panel!
+        open.beginSheetModal(for: host) { [weak self] response in
+            guard response == .OK, let url = open.url else { return }
+            self?.store.setFolder(url)
+        }
+    }
+
+    @objc func importNotes(_ sender: Any?) {
+        let open = NSOpenPanel()
+        open.allowsMultipleSelection = true
+        open.canChooseDirectories = false
+        open.allowedContentTypes = [.plainText, UTType(filenameExtension: "md") ?? .plainText]
+        open.prompt = "Import"
+        open.message = "Choose Markdown or text files to copy into Jot. The originals are left untouched."
+        let host = settingsWindow?.isVisible == true ? settingsWindow! : panel!
+        open.beginSheetModal(for: host) { [weak self] response in
+            guard let self, response == .OK else { return }
+            let count = self.store.importFiles(open.urls)
             let alert = NSAlert()
-            alert.messageText = "Couldn't register \(preset.title)"
-            alert.informativeText = "Another app is probably using it. Pick a different hotkey from the menu bar icon."
-            alert.runModal()
+            alert.messageText = count == 0 ? "Nothing imported" : "Imported \(count) note\(count == 1 ? "" : "s")"
+            if count == 0 { alert.informativeText = "The selected files were empty or not UTF-8 text." }
+            alert.beginSheetModal(for: host)
         }
     }
 
@@ -135,49 +182,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if let url = store.current?.url { NSWorkspace.shared.activateFileViewerSelecting([url]) }
     }
 
-    @objc func openFolder(_ sender: Any?) { NSWorkspace.shared.open(store.folder) }
-
-    @objc func chooseFolder(_ sender: Any?) {
-        if !panel.isVisible { show() }
-        let open = NSOpenPanel()
-        open.canChooseDirectories = true
-        open.canChooseFiles = false
-        open.canCreateDirectories = true
-        open.directoryURL = store.folder
-        open.prompt = "Use Folder"
-        open.message = "Choose the folder where Jot keeps its Markdown notes."
-        open.beginSheetModal(for: panel) { [weak self] response in
-            guard response == .OK, let url = open.url else { return }
-            self?.store.setFolder(url)
-        }
-    }
-
-    @objc func choosePreset(_ sender: NSMenuItem) {
-        presetIndex = sender.tag
-        registerHotKey()
-    }
-
-    @objc func toggleFloat(_ sender: Any?) {
-        floatsOnTop.toggle()
-        panel.level = floatsOnTop ? .floating : .normal
-    }
-
-    @objc func toggleLoginItem(_ sender: Any?) {
-        let service = SMAppService.mainApp
-        do {
-            if service.status == .enabled { try service.unregister() } else { try service.register() }
-        } catch {
-            NSAlert(error: error).runModal()
-        }
-    }
-
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        switch item.action {
-        case #selector(choosePreset(_:)): item.state = item.tag == presetIndex ? .on : .off
-        case #selector(toggleFloat(_:)): item.state = floatsOnTop ? .on : .off
-        case #selector(toggleLoginItem(_:)): item.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        case #selector(toggleAction(_:)): item.title = panel.isVisible && NSApp.isActive ? "Hide Jot" : "Show Jot"
-        default: break
+        if item.action == #selector(toggleAction(_:)) {
+            item.title = panel.isVisible && NSApp.isActive ? "Hide Jot" : "Show Jot"
         }
         return true
     }
@@ -193,22 +200,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         return it
     }
 
-    private func settingsItems() -> [NSMenuItem] {
-        let hotkeys = NSMenu()
-        for (i, p) in HotKey.presets.enumerated() {
-            hotkeys.addItem(item(p.title, #selector(choosePreset(_:)), target: self, tag: i))
-        }
-        let hotkeyItem = NSMenuItem(title: "Hotkey", action: nil, keyEquivalent: "")
-        hotkeyItem.submenu = hotkeys
-        return [
-            item("Choose Notes Folder…", #selector(chooseFolder(_:)), target: self),
-            item("Open Notes Folder", #selector(openFolder(_:)), target: self),
-            hotkeyItem,
-            item("Float on Top", #selector(toggleFloat(_:)), target: self),
-            item("Launch at Login", #selector(toggleLoginItem(_:)), target: self),
-        ]
-    }
-
     private func buildMainMenu() -> NSMenu {
         let main = NSMenu()
         func submenu(_ title: String, _ items: [NSMenuItem]) {
@@ -222,7 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         submenu("Jot", [
             item("About Jot", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), target: NSApp),
             .separator(),
-        ] + settingsItems() + [
+            item("Settings…", #selector(openSettings(_:)), ",", target: self),
             .separator(),
             item("Quit Jot", #selector(NSApplication.terminate(_:)), "q", target: NSApp),
         ])
@@ -232,10 +223,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             item("Previous Note", #selector(previousNote(_:)), "[", target: self),
             item("Next Note", #selector(nextNote(_:)), "]", target: self),
             .separator(),
+            item("Import Markdown Files…", #selector(importNotes(_:)), "i", [.command, .shift], target: self),
             item("Reveal in Finder", #selector(revealNote(_:)), "r", [.command, .shift], target: self),
             item("Move to Trash", #selector(deleteNote(_:)), "\u{8}", [.command, .shift], target: self),
             .separator(),
-            item("Hide", #selector(hideAction(_:)), "w", target: self),
+            item("Close", #selector(NSWindow.performClose(_:)), "w"),
         ])
         submenu("Edit", [
             item("Undo", Selector(("undo:")), "z"),
@@ -273,14 +265,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc private func statusClicked(_ sender: NSStatusBarButton) {
         guard NSApp.currentEvent?.type == .rightMouseUp else { return toggle() }
         let menu = NSMenu()
-        ([
+        [
             item("Show Jot", #selector(toggleAction(_:)), target: self),
             item("New Note", #selector(newNote(_:)), target: self),
             .separator(),
-        ] + settingsItems() + [
+            item("Settings…", #selector(openSettings(_:)), target: self),
             .separator(),
             item("Quit Jot", #selector(NSApplication.terminate(_:)), target: NSApp),
-        ]).forEach(menu.addItem)
+        ].forEach(menu.addItem)
         statusItem.menu = menu
         sender.performClick(nil)
         statusItem.menu = nil
