@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Builds Jot.app into ./build. Pass --install to copy it to ~/Applications and launch it.
+# UNIVERSAL=1 builds for arm64 + x86_64 (used by scripts/release.sh).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-swift build -c release
-BIN="$(swift build -c release --show-bin-path)/Jot"
+ARGS=(-c release)
+[[ "${UNIVERSAL:-}" == 1 ]] && ARGS+=(--arch arm64 --arch x86_64)
+swift build "${ARGS[@]}"
+BIN="$(swift build "${ARGS[@]}" --show-bin-path)/Jot"
 APP=build/Jot.app
 
 rm -rf "$APP"

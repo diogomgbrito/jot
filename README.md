@@ -5,8 +5,16 @@ A tiny native macOS replacement for Raycast Notes: a floating Markdown scratchpa
 ## Install
 
 ```sh
-./scripts/bundle.sh --install   # builds, copies to ~/Applications/Jot.app, launches
+brew tap diogomgbrito/jot https://github.com/diogomgbrito/jot
+brew trust diogomgbrito/jot
+brew install --cask jot
 ```
+
+Update with `brew upgrade --cask jot`.
+
+> The app is not notarized by Apple. The Homebrew cask removes the quarantine flag so macOS lets it open.
+
+From source: `./scripts/bundle.sh --install` builds, copies to `~/Applications/Jot.app` and launches. See [RELEASING.md](RELEASING.md) to publish a version.
 
 Jot lives in the menu bar (no Dock icon). Left-click the icon to toggle, right-click for Settings (also ⌘,).
 Launching Jot while it's running (Raycast hotkey, Spotlight, Finder) shows the window.
@@ -57,3 +65,4 @@ export it as Markdown, then use **Import Markdown Files…** (⇧⌘I or Setting
 - `Sources/Jot/Settings.swift` — preferences model and Settings window
 - `Sources/Jot/HotKey.swift` — Carbon global hotkey
 - `scripts/make-icon.swift` — regenerates `Resources/AppIcon.icns`
+- `scripts/release.sh` — universal DMG for a release; `Casks/jot.rb` — Homebrew cask
