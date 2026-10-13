@@ -17,6 +17,7 @@ final class UIState: ObservableObject {
 struct RootView: View {
     @ObservedObject var store: NoteStore
     @ObservedObject var ui: UIState
+    @AppStorage("formatBarOpen") private var formatBarOpen = false
     let onEscape: () -> Void
 
     var body: some View {
@@ -32,6 +33,7 @@ struct RootView: View {
                     .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
+                    .opacity(formatBarOpen ? 0 : 1)  // the open bar covers it
             }
             FormatBar(ui: ui)
                 .padding(.trailing, 12)

@@ -13,6 +13,7 @@ brew install --cask jot
 ## Release a new version
 
 1. Bump `CFBundleShortVersionString` (and `CFBundleVersion`) in `Resources/Info.plist`, e.g. `1.0.1`.
+   Move the `[Unreleased]` notes in `CHANGELOG.md` under the new version.
 2. Build the DMG:
    ```bash
    scripts/release.sh
@@ -27,7 +28,7 @@ brew install --cask jot
    ```
 5. Create the GitHub release with the DMG:
    ```bash
-   gh release create v1.0.1 build/Jot-1.0.1.dmg --title "Jot 1.0.1" --generate-notes
+   gh release create v1.0.1 build/Jot-1.0.1.dmg --title "Jot 1.0.1" --notes-file <(awk '/^## \[1.0.1\]/{f=1;next} /^## \[|^\[/{f=0} f' CHANGELOG.md)
    ```
 Users then get it with `brew upgrade --cask jot`.
 
