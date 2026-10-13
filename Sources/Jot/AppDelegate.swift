@@ -12,10 +12,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let store = NoteStore()
     let ui = UIState()
     let settings = AppSettings()
+    let shortcuts = ShortcutStore()
     private var panel: NotesPanel!
     private var settingsWindow: NSWindow?
     private var statusItem: NSStatusItem!
     private var hotKey: HotKey?
+    private var shortcutItems: [(ShortcutID, NSMenuItem)] = []
+    private var shortcutTips: [(ShortcutID, String, NSToolbarItem)] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -24,6 +27,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         NSApp.mainMenu = buildMainMenu()
         buildStatusItem()
         settings.onChange = { [weak self] in self?.applySettings() }
+        shortcuts.onChange = { [weak self] in self?.applyShortcuts(); self?.applySettings() }
+        shortcuts.onRecordingChange = { [weak self] in self?.applySettings() }
+        applyShortcuts()
         applySettings()
         show()
         if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
@@ -31,12 +37,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
     }
 
-    /// Debug aid: renders the panel (including titlebar) to a PNG, then quits.
+    /// Debug aid: renders the panel (or, with `--settings <tab>`, the Settings window) to a PNG, then quits.
     private func snapshot(to path: String) {
+        let args = CommandLine.arguments
+        let tab = args.firstIndex(of: "--settings").flatMap { $0 + 1 < args.count ? Int(args[$0 + 1]) : nil }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [self] in
-            if CommandLine.arguments.contains("--format-open") { UserDefaults.standard.set(true, forKey: "formatBarOpen") }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in
-                guard let frameView = panel.contentView?.superview,
+            if args.contains("--format-open") { UserDefaults.standard.set(true, forKey: "formatBarOpen") }
+            if let tab {
+                openSettings(nil)
+                (settingsWindow?.contentViewController as? NSTabViewController)?.selectedTabViewItemIndex = tab
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [self] in
+                let window: NSWindow? = tab == nil ? panel : settingsWindow
+                guard let frameView = window?.contentView?.superview,
                       let rep = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) else { return }
                 frameView.cacheDisplay(in: frameView.bounds, to: rep)
                 try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
@@ -58,14 +71,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         panel.level = settings.floatOnTop ? .floating : .normal
         hotKey = nil
         settings.hotKeyError = nil
-        guard settings.hotKeyEnabled else { return }
-        let preset = HotKey.presets[settings.presetIndex]
-        hotKey = HotKey(preset) { [weak self] in
+        // Paused while recording so the current combo can be pressed into the recorder.
+        guard settings.hotKeyEnabled, shortcuts.recordingID == nil else { return }
+        guard let combo = shortcuts.combo(.toggleJot), let code = combo.keyCode else {
+            settings.hotKeyError = "Record a shortcut to use it."
+            return
+        }
+        hotKey = HotKey(keyCode: UInt32(code), modifiers: combo.carbonModifiers) { [weak self] in
             MainActor.assumeIsolated { self?.toggle() }
         }
         if hotKey == nil {
-            settings.hotKeyError = "Couldn't register \(preset.title); another app is probably using it."
+            settings.hotKeyError = "Couldn't register \(combo.display); another app is probably using it."
         }
+    }
+
+    /// Pushes the current (possibly overridden) shortcuts into the menus and tooltips.
+    private func applyShortcuts() {
+        for (id, item) in shortcutItems {
+            let combo = shortcuts.combo(id)
+            item.keyEquivalent = combo?.key ?? ""
+            item.keyEquivalentModifierMask = combo?.flags ?? []
+        }
+        for (id, tip, item) in shortcutTips { item.toolTip = tip + shortcuts.hint(id) }
     }
 
     // MARK: Panel
@@ -92,7 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         toolbar.centeredItemIdentifiers = [Self.titleItem]
         panel.toolbar = toolbar
         panel.toolbarStyle = .unified
-        let hosting = NSHostingView(rootView: RootView(store: store, ui: ui) { [weak self] in self?.hide() })
+        let hosting = NSHostingView(rootView: RootView(store: store, ui: ui, shortcuts: shortcuts) { [weak self] in self?.hide() })
         hosting.sizingOptions = []
         panel.contentView = hosting
         panel.delegate = self
@@ -128,12 +155,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     @objc func openSettings(_ sender: Any?) {
         if settingsWindow == nil {
-            let view = SettingsView(settings: settings, store: store,
-                                    chooseFolder: { [weak self] in self?.chooseFolder() },
-                                    importNotes: { [weak self] in self?.importNotes(nil) })
-            let window = NSWindow(contentViewController: NSHostingController(rootView: view))
-            window.title = "Jot Settings"
+            func tab<V: View>(_ label: String, _ symbol: String, _ view: V) -> NSTabViewItem {
+                let host = NSHostingController(rootView: view)
+                host.title = label
+                host.sizingOptions = .preferredContentSize
+                let item = NSTabViewItem(viewController: host)
+                item.label = label
+                item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+                return item
+            }
+            let tabs = NSTabViewController()
+            tabs.tabStyle = .toolbar
+            tabs.addTabViewItem(tab("General", "gearshape", GeneralSettingsView(
+                settings: settings, store: store,
+                chooseFolder: { [weak self] in self?.chooseFolder() },
+                importNotes: { [weak self] in self?.importNotes(nil) })))
+            tabs.addTabViewItem(tab("Shortcuts", "keyboard", ShortcutSettingsView(settings: settings, shortcuts: shortcuts)))
+            let window = NSWindow(contentViewController: tabs)
             window.styleMask = [.titled, .closable]
+            window.toolbarStyle = .preference
             window.isReleasedWhenClosed = false
             window.level = .floating
             window.center()
@@ -219,12 +259,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     // MARK: Menus
 
-    private func item(_ title: String, _ action: Selector, _ key: String = "",
-                      _ mods: NSEvent.ModifierFlags = .command, target: AnyObject? = nil, tag: Int = 0) -> NSMenuItem {
-        let it = NSMenuItem(title: title, action: action, keyEquivalent: key)
-        it.keyEquivalentModifierMask = mods
+    private func item(_ title: String, _ action: Selector, target: AnyObject? = nil, tag: Int = 0) -> NSMenuItem {
+        let it = NSMenuItem(title: title, action: action, keyEquivalent: "")
         it.target = target
         it.tag = tag
+        return it
+    }
+
+    /// A menu item whose title and keys come from the shortcut registry.
+    private func item(_ id: ShortcutID, _ action: Selector, target: AnyObject? = nil, tag: Int = 0) -> NSMenuItem {
+        let it = item(id.title, action, target: target, tag: tag)
+        shortcutItems.append((id, it))
         return it
     }
 
@@ -241,53 +286,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         submenu("Jot", [
             item("About Jot", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), target: NSApp),
             .separator(),
-            item("Settings…", #selector(openSettings(_:)), ",", target: self),
+            item(.settings, #selector(openSettings(_:)), target: self),
             .separator(),
-            item("Quit Jot", #selector(NSApplication.terminate(_:)), "q", target: NSApp),
+            item(.quit, #selector(NSApplication.terminate(_:)), target: NSApp),
         ])
         submenu("File", [
-            item("New Note", #selector(newNote(_:)), "n", target: self),
-            item("Find Note…", #selector(showSwitcher(_:)), "p", target: self),
-            item("Previous Note", #selector(previousNote(_:)), "[", target: self),
-            item("Next Note", #selector(nextNote(_:)), "]", target: self),
+            item(.newNote, #selector(newNote(_:)), target: self),
+            item(.findNote, #selector(showSwitcher(_:)), target: self),
+            item(.previousNote, #selector(previousNote(_:)), target: self),
+            item(.nextNote, #selector(nextNote(_:)), target: self),
             .separator(),
-            item("Import Markdown Files…", #selector(importNotes(_:)), "i", [.command, .shift], target: self),
-            item("Reveal in Finder", #selector(revealNote(_:)), "r", [.command, .shift], target: self),
-            item("Move to Trash", #selector(deleteNote(_:)), "\u{8}", [.command, .shift], target: self),
+            item(.copyNote, #selector(copyNote(_:)), target: self),
+            item(.importNotes, #selector(importNotes(_:)), target: self),
+            item(.reveal, #selector(revealNote(_:)), target: self),
+            item(.trash, #selector(deleteNote(_:)), target: self),
             .separator(),
-            item("Close", #selector(NSWindow.performClose(_:)), "w"),
+            item(.close, #selector(NSWindow.performClose(_:))),
         ])
         submenu("Edit", [
-            item("Undo", Selector(("undo:")), "z"),
-            item("Redo", Selector(("redo:")), "z", [.command, .shift]),
+            item(.undo, Selector(("undo:"))),
+            item(.redo, Selector(("redo:"))),
             .separator(),
-            item("Cut", #selector(NSText.cut(_:)), "x"),
-            item("Copy", #selector(NSText.copy(_:)), "c"),
-            item("Paste", #selector(NSText.paste(_:)), "v"),
-            item("Select All", #selector(NSText.selectAll(_:)), "a"),
+            item(.cut, #selector(NSText.cut(_:))),
+            item(.copy, #selector(NSText.copy(_:))),
+            item(.paste, #selector(NSText.paste(_:))),
+            item(.selectAll, #selector(NSText.selectAll(_:))),
             .separator(),
-            item("Find…", #selector(NSTextView.performFindPanelAction(_:)), "f", tag: find.showFindInterface.rawValue),
-            item("Find Next", #selector(NSTextView.performFindPanelAction(_:)), "g", tag: find.nextMatch.rawValue),
-            item("Find Previous", #selector(NSTextView.performFindPanelAction(_:)), "g", [.command, .shift], tag: find.previousMatch.rawValue),
+            item(.find, #selector(NSTextView.performFindPanelAction(_:)), tag: find.showFindInterface.rawValue),
+            item(.findNext, #selector(NSTextView.performFindPanelAction(_:)), tag: find.nextMatch.rawValue),
+            item(.findPrevious, #selector(NSTextView.performFindPanelAction(_:)), tag: find.previousMatch.rawValue),
         ])
         submenu("Format", [
-            item("Heading 1", #selector(MarkdownTextView.jotHeading1(_:)), "1", [.command, .option]),
-            item("Heading 2", #selector(MarkdownTextView.jotHeading2(_:)), "2", [.command, .option]),
-            item("Heading 3", #selector(MarkdownTextView.jotHeading3(_:)), "3", [.command, .option]),
-            item("Body Text", #selector(MarkdownTextView.jotBodyText(_:)), "0", [.command, .option]),
-            item("Cycle Heading", #selector(MarkdownTextView.jotHeading(_:)), "h", [.command, .shift]),
+            item(.heading1, #selector(MarkdownTextView.jotHeading1(_:))),
+            item(.heading2, #selector(MarkdownTextView.jotHeading2(_:))),
+            item(.heading3, #selector(MarkdownTextView.jotHeading3(_:))),
+            item(.bodyText, #selector(MarkdownTextView.jotBodyText(_:))),
+            item(.cycleHeading, #selector(MarkdownTextView.jotHeading(_:))),
             .separator(),
-            item("Bold", #selector(MarkdownTextView.jotBold(_:)), "b"),
-            item("Italic", #selector(MarkdownTextView.jotItalic(_:)), "i"),
-            item("Strikethrough", #selector(MarkdownTextView.jotStrikethrough(_:)), "x", [.command, .shift]),
-            item("Link", #selector(MarkdownTextView.jotLink(_:)), "k"),
-            item("Inline Code", #selector(MarkdownTextView.jotCode(_:)), "c", [.command, .option]),
-            item("Code Block", #selector(MarkdownTextView.jotCodeBlock(_:)), "c", [.command, .option, .shift]),
+            item(.bold, #selector(MarkdownTextView.jotBold(_:))),
+            item(.italic, #selector(MarkdownTextView.jotItalic(_:))),
+            item(.strikethrough, #selector(MarkdownTextView.jotStrikethrough(_:))),
+            item(.link, #selector(MarkdownTextView.jotLink(_:))),
+            item(.inlineCode, #selector(MarkdownTextView.jotCode(_:))),
+            item(.codeBlock, #selector(MarkdownTextView.jotCodeBlock(_:))),
             .separator(),
-            item("Bulleted List", #selector(MarkdownTextView.jotBulletList(_:)), "8", [.command, .shift]),
-            item("Numbered List", #selector(MarkdownTextView.jotNumberedList(_:)), "7", [.command, .shift]),
-            item("Checklist", #selector(MarkdownTextView.jotChecklist(_:)), "l", [.command, .shift]),
-            item("Quote", #selector(MarkdownTextView.jotQuote(_:)), "'", [.command, .shift]),
+            item(.bulletList, #selector(MarkdownTextView.jotBulletList(_:))),
+            item(.numberedList, #selector(MarkdownTextView.jotNumberedList(_:))),
+            item(.checklist, #selector(MarkdownTextView.jotChecklist(_:))),
+            item(.quote, #selector(MarkdownTextView.jotQuote(_:))),
         ])
         return main
     }
@@ -360,8 +406,8 @@ extension AppDelegate: NSToolbarDelegate {
             ].forEach(menu.addItem)
             actions.menu = menu
 
-            let browse = toolbarButton("JotBrowse", "square.on.square", "Browse notes (⌘P)", #selector(showSwitcher(_:)))
-            let add = toolbarButton("JotNew", "plus", "New note (⌘N)", #selector(newNote(_:)))
+            let browse = toolbarButton("JotBrowse", "square.on.square", "Browse notes", .findNote, #selector(showSwitcher(_:)))
+            let add = toolbarButton("JotNew", "plus", "New note", .newNote, #selector(newNote(_:)))
             let group = NSToolbarItemGroup(itemIdentifier: id)
             group.subitems = [actions, browse, add]
             group.controlRepresentation = .expanded
@@ -372,11 +418,13 @@ extension AppDelegate: NSToolbarDelegate {
         }
     }
 
-    private func toolbarButton(_ id: String, _ symbol: String, _ tip: String, _ action: Selector) -> NSToolbarItem {
+    private func toolbarButton(_ id: String, _ symbol: String, _ tip: String, _ shortcut: ShortcutID,
+                               _ action: Selector) -> NSToolbarItem {
         let item = NSToolbarItem(itemIdentifier: NSToolbarItem.Identifier(id))
         item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
         item.label = tip
-        item.toolTip = tip
+        item.toolTip = tip + shortcuts.hint(shortcut)
+        shortcutTips.append((shortcut, tip, item))
         item.target = self
         item.action = action
         return item

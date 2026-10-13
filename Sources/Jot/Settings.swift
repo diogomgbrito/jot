@@ -10,9 +10,6 @@ final class AppSettings: ObservableObject {
     @Published var hotKeyEnabled: Bool {
         didSet { defaults.set(hotKeyEnabled, forKey: "hotKeyEnabled"); onChange?() }
     }
-    @Published var presetIndex: Int {
-        didSet { defaults.set(presetIndex, forKey: "hotKeyPreset"); onChange?() }
-    }
     @Published var floatOnTop: Bool {
         didSet { defaults.set(floatOnTop, forKey: "floatOnTop"); onChange?() }
     }
@@ -24,7 +21,6 @@ final class AppSettings: ObservableObject {
 
     init() {
         hotKeyEnabled = defaults.object(forKey: "hotKeyEnabled") as? Bool ?? false
-        presetIndex = min(defaults.integer(forKey: "hotKeyPreset"), HotKey.presets.count - 1)
         floatOnTop = defaults.object(forKey: "floatOnTop") as? Bool ?? true
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
@@ -42,7 +38,7 @@ final class AppSettings: ObservableObject {
     }
 }
 
-struct SettingsView: View {
+struct GeneralSettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var store: NoteStore
     let chooseFolder: () -> Void
@@ -50,24 +46,6 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section {
-                Toggle("Global shortcut to show / hide Jot", isOn: $settings.hotKeyEnabled)
-                Picker("Shortcut", selection: $settings.presetIndex) {
-                    ForEach(HotKey.presets.indices, id: \.self) { i in
-                        Text(HotKey.presets[i].title).tag(i)
-                    }
-                }
-                .disabled(!settings.hotKeyEnabled)
-                if let error = settings.hotKeyError {
-                    Text(error).font(.caption).foregroundStyle(.red)
-                }
-            } header: {
-                Text("Shortcut")
-            } footer: {
-                Text("Leave this off if you open Jot with a Raycast hotkey.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
             Section("Window") {
                 Toggle("Float on top of other windows", isOn: $settings.floatOnTop)
                 Toggle("Launch at login", isOn: $settings.launchAtLogin)

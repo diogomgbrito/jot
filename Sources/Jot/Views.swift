@@ -17,6 +17,7 @@ final class UIState: ObservableObject {
 struct RootView: View {
     @ObservedObject var store: NoteStore
     @ObservedObject var ui: UIState
+    @ObservedObject var shortcuts: ShortcutStore
     @AppStorage("formatBarOpen") private var formatBarOpen = false
     let onEscape: () -> Void
 
@@ -35,7 +36,7 @@ struct RootView: View {
                     .padding(.vertical, 14)
                     .opacity(formatBarOpen ? 0 : 1)  // the open bar covers it
             }
-            FormatBar(ui: ui)
+            FormatBar(ui: ui, shortcuts: shortcuts)
                 .padding(.trailing, 12)
                 .padding(.bottom, 8)
         }
@@ -71,6 +72,7 @@ struct TitleView: View {
 /// Collapsible formatting bar in the bottom-right corner, like Raycast Notes.
 struct FormatBar: View {
     @ObservedObject var ui: UIState
+    @ObservedObject var shortcuts: ShortcutStore
     @AppStorage("formatBarOpen") private var open = false
 
     private func apply(_ action: (MarkdownTextView) -> Void) {
@@ -106,11 +108,11 @@ struct FormatBar: View {
                     .fixedSize()
                     .help("Text style")
 
-                    tool("link", "Link (⌘K)") { $0.jotLink(nil) }
-                    tool("chevron.left.forwardslash.chevron.right", "Inline code") { $0.jotCode(nil) }
+                    tool("link", .link) { $0.jotLink(nil) }
+                    tool("chevron.left.forwardslash.chevron.right", .inlineCode) { $0.jotCode(nil) }
                     Divider().frame(height: 18).padding(.horizontal, 4)
-                    tool("curlybraces.square", "Code block") { $0.jotCodeBlock(nil) }
-                    tool("text.quote", "Quote") { $0.jotQuote(nil) }
+                    tool("curlybraces.square", .codeBlock) { $0.jotCodeBlock(nil) }
+                    tool("text.quote", .quote) { $0.jotQuote(nil) }
                     Divider().frame(height: 18).padding(.horizontal, 4)
 
                     Menu {
@@ -149,12 +151,12 @@ struct FormatBar: View {
         .foregroundStyle(.secondary)
     }
 
-    private func tool(_ symbol: String, _ help: String, _ action: @escaping (MarkdownTextView) -> Void) -> some View {
+    private func tool(_ symbol: String, _ id: ShortcutID, _ action: @escaping (MarkdownTextView) -> Void) -> some View {
         Button { apply(action) } label: {
             Image(systemName: symbol).frame(width: 28, height: 28).contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
-        .help(help)
+        .help(id.title + shortcuts.hint(id))
     }
 }
 

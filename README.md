@@ -61,14 +61,17 @@ Update with `brew upgrade --cask jot`. Requires macOS 14 (Sonoma) or later, on A
 | 🎛 **Formatting bar** | The **T** button opens headings, styles, links, code and lists |
 | 📂 **Plain files** | One `.md` file per note, in any folder you choose |
 | 📥 **Import** | Bring in Markdown files, including notes exported from Raycast |
+| ⌨️ **Your shortcuts** | Change or remove any shortcut in Settings → Shortcuts |
 | ⚙️ **Settings** | Global shortcut, float on top, launch at login, notes folder |
 
 ## Shortcuts
 
+These are the defaults. Every one of them, including the global shortcut, can be changed or removed in **Settings → Shortcuts**: click a shortcut, press the new keys (⌫ removes it, Esc cancels). Jot warns when two commands share the same keys.
+
 | Keys | Action |
 | --- | --- |
 | Esc · ⌘W | Hide |
-| Global shortcut (enable in Settings) | Show / hide Jot from anywhere |
+| ⌥⌘N (enable in Settings) | Show / hide Jot from anywhere |
 | ⌘N | New note |
 | ⌘P | Search / switch notes |
 | ⌘[ · ⌘] | Previous / next note |
@@ -126,7 +129,8 @@ git clone https://github.com/diogomgbrito/jot && cd jot
 - `Sources/Jot/NoteStore.swift`: file-backed notes model
 - `Sources/Jot/Editor.swift`: text view, Markdown highlighter, editing behaviours
 - `Sources/Jot/Views.swift`: SwiftUI title, formatting bar, note switcher
-- `Sources/Jot/Settings.swift`: preferences model and Settings window
+- `Sources/Jot/Settings.swift`: preferences model and General settings
+- `Sources/Jot/Shortcuts.swift`: shortcut registry, overrides and the Shortcuts settings page
 - `Sources/Jot/HotKey.swift`: Carbon global hotkey
 - `scripts/bundle.sh`: builds `Jot.app`
 - `scripts/release.sh`: universal DMG for a release

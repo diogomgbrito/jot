@@ -4,6 +4,16 @@ All notable changes to Jot. Versions follow [Semantic Versioning](https://semver
 
 ## [Unreleased]
 
+### Added
+
+- **Custom shortcuts.** A new **Shortcuts** page in Settings lists every command (global show/hide, Jot, File, Edit and Format menus). Click one and press new keys to change it, ⌫ to remove it, or restore the default. Jot flags commands that share the same keys.
+- The global shortcut can be any combination, no longer one of five presets. A preset picked in 1.0 carries over.
+- **Copy Note as Markdown** is now in the File menu, so it can get a shortcut.
+
+### Changed
+
+- Settings is split into **General** and **Shortcuts** tabs.
+
 ### Fixed
 
 - The character count no longer shows through the open formatting bar.
