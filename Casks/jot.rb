@@ -1,6 +1,6 @@
 cask "jot" do
-  version "1.0.0"
-  sha256 "c1682a7eda995a7c3a27a339a762d4e345ea6f5932ffdf193eea5f540aba344f"
+  version "1.1.0"
+  sha256 "2fc387a6c767e0bcb6a36ce865839f5c87f8ea1df816bb380b6b45527fe9d226"
 
   url "https://github.com/diogomgbrito/jot/releases/download/v#{version}/Jot-#{version}.dmg"
   name "Jot"

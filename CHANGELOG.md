@@ -4,6 +4,8 @@ All notable changes to Jot. Versions follow [Semantic Versioning](https://semver
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-10-13
+
 ### Added
 
 - **Custom shortcuts.** A new **Shortcuts** page in Settings lists every command (global show/hide, Jot, File, Edit and Format menus). Click one and press new keys to change it, ⌫ to remove it, or restore the default. Jot flags commands that share the same keys.
@@ -35,4 +37,6 @@ First release.
 - **Import.** Copy Markdown or text files into Jot, keeping their modification dates. Works with notes exported from Raycast Notes.
 - **Homebrew cask.** `brew install --cask jot` from the `diogomgbrito/jot` tap. Universal build for Apple silicon and Intel, macOS 14 or later.
 
+[Unreleased]: https://github.com/diogomgbrito/jot/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/diogomgbrito/jot/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/diogomgbrito/jot/releases/tag/v1.0.0
